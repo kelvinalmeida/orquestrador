@@ -2,7 +2,7 @@
 // console.log("Chat.js carregado!");
 
 function initializeChatComponent() {
-
+    console.log("Initializing Chat Component...");
 
     // Clean up previous socket if exists
     if (window.chatSocket) {
@@ -11,14 +11,15 @@ function initializeChatComponent() {
         window.chatSocket = null;
     }
 
-    const socket = io();
+    // Force a new connection manager to avoid reuse of disconnected ones
+    const socket = io({ forceNew: true });
     window.chatSocket = socket;
 
     const myUsername = window.myUsername;
     const myUserId = window.myUserId;
     const chatId = window.chatId;
 
-    // console.log(`Usuário atual: ${myUsername} (ID: ${myUserId}) no chat ${chatId}`);
+    console.log(`User: ${myUsername} (ID: ${myUserId}) no chat ${chatId}`);
 
     // Elementos da UI
     const userList = document.getElementById('user-list');
@@ -26,6 +27,11 @@ function initializeChatComponent() {
     const chatTabsContent = document.getElementById('chat-tabs-content');
     const chatForm = document.getElementById('chatForm');
     const messageInput = document.getElementById('myMessage');
+
+    if (!chatTabsList || !chatTabsContent) {
+        console.error("Critical chat elements (tabs/content) not found in DOM! initialization aborted.");
+        return;
+    }
 
     // Estado para controlar as conversas privadas abertas
     let openPrivateChats = new Set();
@@ -213,8 +219,12 @@ function initializeChatComponent() {
     // --- SOCKET.IO LISTENERS ---
 
     socket.on('connect', function () {
-        console.log('Conectado ao servidor!');
+        console.log('Conectado ao servidor! Socket ID:', socket.id);
         socket.emit('join', { chat_id: chatId });
+    });
+
+    socket.on('connect_error', (error) => {
+        console.error("Socket Connection Error:", error);
     });
 
     socket.on('new_private_message', function (message) {
@@ -323,6 +333,8 @@ function initializeChatComponent() {
 
     // --- INICIALIZAÇÃO ---
     function initializeChat() {
+        if (!chatTabsList || !chatTabsContent) return;
+
         // Cria a aba "Geral"
         chatTabsList.innerHTML = `
             <li class="nav-item">
@@ -334,6 +346,7 @@ function initializeChatComponent() {
             </div>`;
 
         // Solicita o histórico geral ao se conectar
+        console.log("Requesting general messages history...");
         socket.emit('load_general_messages', { chat_id: chatId });
     }
 
