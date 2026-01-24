@@ -182,15 +182,34 @@ function initializeChatComponent() {
     // Lidar com o envio de mensagem
     chatForm.addEventListener('submit', function (e) {
         e.preventDefault();
+        console.log("Formulário de chat submetido.");
+
+        if (!socket.connected) {
+             console.error("Erro: Socket desconectado ao tentar enviar mensagem.");
+             alert("Erro de conexão. Tentando reconectar...");
+             socket.connect();
+             return;
+        }
+
         const message = messageInput.value.trim();
-        if (message === "") return;
+        if (message === "") {
+            console.warn("Tentativa de enviar mensagem vazia.");
+            return;
+        }
 
         // Descobrir qual aba está ativa
         const activeTab = document.querySelector('#chat-tabs-list .nav-link.active');
+
+        if (!activeTab) {
+            console.error("Nenhuma aba ativa encontrada.");
+            return;
+        }
+
         const activeTabUsername = activeTab.id; // ex: 'tab-btn-geral' ou 'tab-btn-usename'
-        // console.log(">>>>>  ", activeTab)
+        console.log(`Enviando mensagem na aba: ${activeTabUsername}`);
 
         if (activeTabUsername === 'tab-btn-geral') {
+            console.log("Emitindo 'general_message' para o servidor...");
             socket.emit('general_message', {
                 username: myUsername,
                 chat_id: chatId,
@@ -198,18 +217,13 @@ function initializeChatComponent() {
             });
         } else {
             const targetUsername = activeTabUsername.replace('tab-btn-', '');
-            // const targetUserName = 
-            // console.log(activeTab);
-            // console.log(`Enviando mensagem privada para o usuário: ${targetUsername}`);
-            // console.log("1 - oiiii");
+            console.log(`Emitindo 'private_message' para ${targetUsername}...`);
             socket.emit('private_message', {
                 username: myUsername,
                 target_username: targetUsername,
                 content: message,
                 chat_id: chatId
             });
-            // Adiciona a mensagem à sua própria tela imediatamente
-            // addMessageToPane(`tab-pane-${targetUserId}`, { username: myUsername, content: message });
         }
 
         messageInput.value = "";
@@ -225,6 +239,11 @@ function initializeChatComponent() {
 
     socket.on('connect_error', (error) => {
         console.error("Socket Connection Error:", error);
+    });
+
+    socket.on('error', (data) => {
+        console.error("Erro recebido do servidor:", data);
+        alert("Erro no chat: " + (data.details || JSON.stringify(data)));
     });
 
     socket.on('new_private_message', function (message) {
@@ -292,6 +311,7 @@ function initializeChatComponent() {
     }
 
     socket.on('new_general_message', function (message) {
+        console.log("Nova mensagem geral recebida:", message);
         // Adiciona a mensagem à aba "Geral"
         addMessageToPane('tab-pane-geral', message);
     });

@@ -221,16 +221,27 @@ def handle_load_private(data):
 def handle_general_message(data):
     """Recebe uma mensagem geral, salva via API e retransmite para a sala."""
     chat_id = data.get('chat_id')
+    print(f"[SOCKET] Recebida mensagem geral para chat_id={chat_id} de {session.get('username')}")
+
     message_payload = {
         "username": session.get('username'),
         "content": data.get('content')
     }
     try:
         # Salva a mensagem na API
-        requests.post(f"{STRATEGIES_URL}/chat/{chat_id}/add_message", json=message_payload)
+        print(f"[SOCKET] Salvando mensagem na API: {STRATEGIES_URL}/chat/{chat_id}/add_message")
+        resp = requests.post(f"{STRATEGIES_URL}/chat/{chat_id}/add_message", json=message_payload)
+
+        if resp.status_code != 200:
+             print(f"[SOCKET] Erro na API (status {resp.status_code}): {resp.text}")
+             emit('error', {"details": f"Falha ao salvar mensagem: {resp.text}"})
+             return
+
         # Retransmite para todos na sala
+        print(f"[SOCKET] Emitindo 'new_general_message' para sala {chat_id}")
         emit('new_general_message', message_payload, to=chat_id)
     except RequestException as e:
+        print(f"[SOCKET] Exceção na requisição API: {e}")
         emit('error', {"details": f"Não foi possível enviar a mensagem: {str(e)}"})
 
 @socketio.on('private_message')
@@ -242,6 +253,8 @@ def handle_private_message(data):
     target_username = data.get('target_username')
     # recipient_name = data.get('recipient_name')
 
+    print(f"[SOCKET] Recebida mensagem privada para {target_username} (chat_id={chat_id})")
+
     message_payload = {
         "sender_id": sender_id,
         "content": data.get('content'),
@@ -251,6 +264,12 @@ def handle_private_message(data):
     try:
         # Salva a mensagem privada na API
         response = requests.post(f"{STRATEGIES_URL}/chat/{chat_id}/add_priv_message", json=message_payload)
+
+        if response.status_code != 200:
+            print(f"[SOCKET] Erro na API (privada): {response.text}")
+            emit('error', {"details": f"Falha ao salvar mensagem privada: {response.text}"})
+            return
+
         new_message = response.json() # A API deve retornar a mensagem criada
 
         # A lógica para enviar ao destinatário específico é complexa sem um mapeamento user->socket.
@@ -259,6 +278,7 @@ def handle_private_message(data):
         emit('new_private_message', new_message, to=chat_id)
         
     except RequestException as e:
+        print(f"[SOCKET] Exceção na requisição API (privada): {e}")
         emit('error', {"details": f"Não foi possível enviar a mensagem privada: {str(e)}"})
 @strategy_bp.route('/strategies/strategies_json', methods=['GET'])
 def get_strategies_json():
