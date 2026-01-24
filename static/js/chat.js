@@ -4,7 +4,15 @@
 function initializeChatComponent() {
 
 
+    // Clean up previous socket if exists
+    if (window.chatSocket) {
+        console.log("Disconnecting previous socket...");
+        window.chatSocket.disconnect();
+        window.chatSocket = null;
+    }
+
     const socket = io();
+    window.chatSocket = socket;
 
     const myUsername = window.myUsername;
     const myUserId = window.myUserId;

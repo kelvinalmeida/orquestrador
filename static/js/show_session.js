@@ -624,6 +624,11 @@ document.addEventListener("DOMContentLoaded", () => {
         let chatElement = document.getElementById("debate_sicrono");
         if (chatElement && !debateSicrono_isActive) {
             chatElement.remove();
+            if (window.chatSocket) {
+                console.log("Desconectando socket do chat...");
+                window.chatSocket.disconnect();
+                window.chatSocket = null;
+            }
         }
 
         let envio_informacao_aviso = document.getElementById("envio_informacao_aviso");

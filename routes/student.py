@@ -1,5 +1,4 @@
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for
-from wsgi import login_bp
 from requests.exceptions import RequestException
 import requests
 from .auth import token_required
