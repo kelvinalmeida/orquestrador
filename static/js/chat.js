@@ -3,8 +3,13 @@
 
 function initializeChatComponent() {
 
+    if (window.chatSocket) {
+        console.log("Desconectando socket anterior...");
+        window.chatSocket.disconnect();
+    }
 
-    const socket = io();
+    const socket = io({ forceNew: true });
+    window.chatSocket = socket;
 
     const myUsername = window.myUsername;
     const myUserId = window.myUserId;
