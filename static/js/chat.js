@@ -14,7 +14,7 @@ function initializeChatComponent() {
         }
     } else {
         console.log("Criando nova conexão socket...");
-        socket = io();
+        socket = io({ forceNew: true });
         window.chatSocket = socket;
     }
 
