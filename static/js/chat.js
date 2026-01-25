@@ -102,11 +102,19 @@ function initializeChatComponent() {
         // console.log(`Adicionando mensagem ao painel ${paneId}: >>> `, message);
 
         const pane = document.getElementById(paneId);
-        if (!pane) return;
+        if (!pane) {
+            console.warn(`Painel de chat ${paneId} não encontrado. Tentando novamente em breve...`);
+            // Pode ser que o DOM ainda não tenha atualizado completamente.
+            return;
+        }
         // console.log('3 - oii >> ', pane);
 
         const messagesUl = pane.querySelector('.chat-messages');
-        // console.log(messagesUl);
+        if (!messagesUl) {
+            console.error("Lista de mensagens não encontrada no painel.");
+            return;
+        }
+
         const item = document.createElement('li');
 
         // console.log(item);

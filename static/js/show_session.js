@@ -631,13 +631,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         let chatElement = document.getElementById("debate_sicrono");
-        if (chatElement && !debateSicrono_isActive) {
-            chatElement.remove();
-            if (window.chatSocket) {
-                console.log("Desconectando chat socket ao remover elemento...");
-                window.chatSocket.disconnect();
-                window.chatSocket = null;
-            }
+        if (!debateSicrono_isActive) {
+             if (chatElement) {
+                 chatElement.remove();
+             }
+             if (window.chatSocket) {
+                 console.log("Desconectando chat socket (cleanup)...");
+                 window.chatSocket.disconnect();
+                 window.chatSocket = null;
+             }
         }
 
         let envio_informacao_aviso = document.getElementById("envio_informacao_aviso");
