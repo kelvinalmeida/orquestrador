@@ -2,7 +2,37 @@
 // console.log("Chat.js carregado!");
 
 function initializeChatComponent() {
+    // 1. Elementos da UI e Verificações Iniciais
+    const userList = document.getElementById('user-list');
+    const chatTabsList = document.getElementById('chat-tabs-list');
+    const chatTabsContent = document.getElementById('chat-tabs-content');
+    const chatForm = document.getElementById('chatForm');
+    const messageInput = document.getElementById('myMessage');
+    const myUsername = window.myUsername;
+    const myUserId = window.myUserId;
+    const chatId = window.chatId;
 
+    if (!chatTabsList || !chatTabsContent) {
+        console.error("Elementos críticos do chat não encontrados no DOM. Abortando inicialização.");
+        return;
+    }
+
+    // 2. Construção da UI (Garantir que os elementos existam antes de qualquer evento de socket)
+    function buildInitialUI() {
+        chatTabsList.innerHTML = `
+            <li class="nav-item">
+                <button class="nav-link active" id="tab-btn-geral" data-bs-toggle="tab" data-bs-target="#tab-pane-geral" type="button" role="tab" aria-controls="tab-pane-geral" aria-selected="true">Geral</button>
+            </li>`;
+        chatTabsContent.innerHTML = `
+            <div class="tab-pane fade show active" id="tab-pane-geral" role="tabpanel">
+                <ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>
+            </div>`;
+    }
+
+    // Constrói a UI imediatamente
+    buildInitialUI();
+
+    // 3. Configuração do Socket
     let socket;
 
     if (window.chatSocket) {
@@ -17,19 +47,6 @@ function initializeChatComponent() {
         socket = io({ forceNew: true });
         window.chatSocket = socket;
     }
-
-    const myUsername = window.myUsername;
-    const myUserId = window.myUserId;
-    const chatId = window.chatId;
-
-    // console.log(`Usuário atual: ${myUsername} (ID: ${myUserId}) no chat ${chatId}`);
-
-    // Elementos da UI
-    const userList = document.getElementById('user-list');
-    const chatTabsList = document.getElementById('chat-tabs-list');
-    const chatTabsContent = document.getElementById('chat-tabs-content');
-    const chatForm = document.getElementById('chatForm');
-    const messageInput = document.getElementById('myMessage');
 
     // Estado para controlar as conversas privadas abertas
     let openPrivateChats = new Set();
@@ -228,10 +245,8 @@ function initializeChatComponent() {
     function onSocketConnected() {
         console.log('Conectado ao servidor (ou reconectado)!');
         socket.emit('join', { chat_id: chatId });
-        // Também solicitamos o histórico aqui caso seja uma reconexão
-        // Mas o histórico já é solicitado no initializeChat() -> load_general_messages
-        // Entretanto, se o socket já estava conectado, o 'connect' event não dispara,
-        // então precisamos chamar manualmente se necessário.
+        // Garante que o histórico seja carregado sempre que conectar/reconectar
+        socket.emit('load_general_messages', { chat_id: chatId });
     }
 
     socket.on('connect', onSocketConnected);
@@ -347,21 +362,4 @@ function initializeChatComponent() {
         data.messages.forEach(msg => addMessageToPane(paneId, msg));
     });
 
-    // --- INICIALIZAÇÃO ---
-    function initializeChat() {
-        // Cria a aba "Geral"
-        chatTabsList.innerHTML = `
-            <li class="nav-item">
-                <button class="nav-link active" id="tab-btn-geral" data-bs-toggle="tab" data-bs-target="#tab-pane-geral" type="button" role="tab" aria-controls="tab-pane-geral" aria-selected="true">Geral</button>
-            </li>`;
-        chatTabsContent.innerHTML = `
-            <div class="tab-pane fade show active" id="tab-pane-geral" role="tabpanel">
-                <ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>
-            </div>`;
-
-        // Solicita o histórico geral ao se conectar
-        socket.emit('load_general_messages', { chat_id: chatId });
-    }
-
-    initializeChat();
 };
