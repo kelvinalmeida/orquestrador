@@ -314,14 +314,6 @@ function initializeChatComponent() {
         addMessageToPane('tab-pane-geral', message);
     });
 
-    function showUserJoinedToChat(msg) {
-        socket.emit('general_message', {
-            username: myUsername,
-            chat_id: chatId,
-            content: msg
-        });
-    }
-
     socket.on('new_general_message', function (message) {
         // Adiciona a mensagem à aba "Geral"
         addMessageToPane('tab-pane-geral', message);
@@ -342,13 +334,12 @@ function initializeChatComponent() {
         console.log('Carregando histórico de mensagens gerais...');
         console.log(messages);
         const pane = document.getElementById('tab-pane-geral');
+        if (!pane) return;
         const messagesUl = pane.querySelector('.chat-messages');
+        if (!messagesUl) return;
+
         messagesUl.innerHTML = ''; // Limpa antes de carregar
         messages['messages'].forEach(msg => addMessageToPane('tab-pane-geral', msg));
-
-        // Notifica os outros na sala que um novo usuário entrou
-        showUserJoinedToChat(`aviso - ${myUsername} entrou na sala geral.`)
-        // console.log(`${myUsername} entrou na sala geral.`);
     });
 
     socket.on('private_messages_history', function (data) {
