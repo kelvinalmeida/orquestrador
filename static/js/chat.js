@@ -216,10 +216,24 @@ function initializeChatComponent() {
 
     // --- SOCKET.IO LISTENERS ---
 
-    socket.on('connect', function () {
-        console.log('Conectado ao servidor!');
+    // Função auxiliar para ações de conexão (join, load_history)
+    function onSocketConnected() {
+        console.log('Conectado ao servidor (ou reconectado)!');
         socket.emit('join', { chat_id: chatId });
-    });
+        // Também solicitamos o histórico aqui caso seja uma reconexão
+        // Mas o histórico já é solicitado no initializeChat() -> load_general_messages
+        // Entretanto, se o socket já estava conectado, o 'connect' event não dispara,
+        // então precisamos chamar manualmente se necessário.
+    }
+
+    socket.on('connect', onSocketConnected);
+
+    // Se reutilizamos um socket já conectado, precisamos "fingir" o evento connect
+    // ou simplesmente executar as ações de entrada na sala.
+    if (socket.connected) {
+        console.log("Socket já estava conectado. Executando ações de entrada...");
+        onSocketConnected();
+    }
 
     socket.on('new_private_message', function (message) {
         const sender_username = message.username;
