@@ -367,6 +367,11 @@ class ChatUI {
         const sender = msg.username;
         const target = msg.target_username;
 
+        // Verifica se a mensagem é para mim ou enviada por mim
+        if (sender !== this.myUsername && target !== this.myUsername) {
+            return;
+        }
+
         let chatPartner = (sender === this.myUsername) ? target : sender;
 
         // Se a aba não existe, abre
