@@ -30,6 +30,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("student-answers-card").innerHTML = '<em>Sem respostas de exercícios enviadas nesta sessão.</em>';
     }
 
+    // Variável para armazenar a instância atual da UI do Chat
+    let currentChatUI = null;
 
     console.log("Session ID: ", session_id);
 
@@ -65,24 +67,39 @@ document.addEventListener("DOMContentLoaded", () => {
                 chatHere.id = "debate_sicrono";
 
                 // Reexecutar scripts
-                chatHere.querySelectorAll("script").forEach(oldScript => {
+                const scripts = Array.from(chatHere.querySelectorAll("script"));
+                let loadedScripts = 0;
+                const totalScripts = scripts.filter(s => s.src).length;
+
+                scripts.forEach(oldScript => {
                     const newScript = document.createElement("script");
 
                     if (oldScript.src) {
                         newScript.src = oldScript.src;
-                        document.body.appendChild(newScript);
-
-                        // Espera o carregamento e só então executa a função
                         newScript.onload = () => {
-                            if (typeof initializeChatComponent === "function") {
-                                initializeChatComponent();
+                            loadedScripts++;
+                            // Só inicializa se for o último script carregado ou se só houver ele
+                            if (loadedScripts === totalScripts && typeof initializeChatComponent === "function") {
+                                if (currentChatUI) {
+                                    currentChatUI.destroy();
+                                }
+                                currentChatUI = initializeChatComponent();
                             }
                         };
+                        document.body.appendChild(newScript);
                     } else {
                         newScript.textContent = oldScript.textContent;
                         document.body.appendChild(newScript);
                     }
                 });
+
+                // Caso não tenha scripts externos, mas tenha inline com a função já definida
+                if (totalScripts === 0 && typeof initializeChatComponent === "function") {
+                    if (currentChatUI) {
+                        currentChatUI.destroy();
+                    }
+                    currentChatUI = initializeChatComponent();
+                }
 
                 const chatContainer = document.getElementById("tatic_here");
                 chatContainer.innerHTML = ""; // Limpa o conteúdo anterior
@@ -622,8 +639,23 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         let chatElement = document.getElementById("debate_sicrono");
-        if (chatElement && !debateSicrono_isActive) {
-            chatElement.remove();
+        if (!debateSicrono_isActive) {
+             if (chatElement) {
+                 chatElement.remove();
+             }
+
+             // Limpeza correta da UI usando o método destroy() da classe
+             if (currentChatUI) {
+                 console.log("Limpando instância da UI do Chat...");
+                 currentChatUI.destroy();
+                 currentChatUI = null;
+             }
+
+             // O Service (socket) pode permanecer conectado ou ser desconectado aqui
+             // Se quisermos desconectar totalmente ao sair da aba:
+             // if (window.ChatService && window.ChatService.instance) {
+             //    window.ChatService.instance.disconnect();
+             // }
         }
 
         let envio_informacao_aviso = document.getElementById("envio_informacao_aviso");
