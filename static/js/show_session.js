@@ -65,24 +65,33 @@ document.addEventListener("DOMContentLoaded", () => {
                 chatHere.id = "debate_sicrono";
 
                 // Reexecutar scripts
-                chatHere.querySelectorAll("script").forEach(oldScript => {
+                const scripts = Array.from(chatHere.querySelectorAll("script"));
+                let loadedScripts = 0;
+                const totalScripts = scripts.filter(s => s.src).length;
+
+                scripts.forEach(oldScript => {
                     const newScript = document.createElement("script");
 
                     if (oldScript.src) {
                         newScript.src = oldScript.src;
-                        document.body.appendChild(newScript);
-
-                        // Espera o carregamento e só então executa a função
                         newScript.onload = () => {
-                            if (typeof initializeChatComponent === "function") {
+                            loadedScripts++;
+                            // Só inicializa se for o último script carregado ou se só houver ele
+                            if (loadedScripts === totalScripts && typeof initializeChatComponent === "function") {
                                 initializeChatComponent();
                             }
                         };
+                        document.body.appendChild(newScript);
                     } else {
                         newScript.textContent = oldScript.textContent;
                         document.body.appendChild(newScript);
                     }
                 });
+
+                // Caso não tenha scripts externos, mas tenha inline com a função já definida
+                if (totalScripts === 0 && typeof initializeChatComponent === "function") {
+                    initializeChatComponent();
+                }
 
                 const chatContainer = document.getElementById("tatic_here");
                 chatContainer.innerHTML = ""; // Limpa o conteúdo anterior

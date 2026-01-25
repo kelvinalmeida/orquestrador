@@ -3,13 +3,20 @@
 
 function initializeChatComponent() {
 
-    if (window.chatSocket) {
-        console.log("Desconectando socket anterior...");
-        window.chatSocket.disconnect();
-    }
+    let socket;
 
-    const socket = io({ forceNew: true });
-    window.chatSocket = socket;
+    if (window.chatSocket) {
+        console.log("Reutilizando socket existente...");
+        socket = window.chatSocket;
+        socket.removeAllListeners();
+        if (!socket.connected) {
+            socket.connect();
+        }
+    } else {
+        console.log("Criando nova conexão socket...");
+        socket = io();
+        window.chatSocket = socket;
+    }
 
     const myUsername = window.myUsername;
     const myUserId = window.myUserId;
