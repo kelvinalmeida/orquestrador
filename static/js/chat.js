@@ -1,356 +1,451 @@
-// Todo o JavaScript virá aqui
-// console.log("Chat.js carregado!");
+// --- ChatService: Gerencia a conexão Socket.IO (Singleton) ---
+class ChatService {
+    constructor() {
+        if (ChatService.instance) {
+            return ChatService.instance;
+        }
 
-function initializeChatComponent() {
-    // 1. Elementos da UI e Verificações Iniciais
-    const userList = document.getElementById('user-list');
-    const chatTabsList = document.getElementById('chat-tabs-list');
-    const chatTabsContent = document.getElementById('chat-tabs-content');
-    const chatForm = document.getElementById('chatForm');
-    const messageInput = document.getElementById('myMessage');
-    const myUsername = window.myUsername;
-    const myUserId = window.myUserId;
-    const chatId = window.chatId;
+        console.log("[ChatService] Inicializando serviço...");
+        this.socket = null;
+        this.listeners = new Map(); // Map<EventName, Set<Callback>>
+        this.chatId = null;
+        this.isConnected = false;
 
-    if (!chatTabsList || !chatTabsContent) {
-        console.error("Elementos críticos do chat não encontrados no DOM. Abortando inicialização.");
-        return;
+        ChatService.instance = this;
     }
 
-    // 2. Construção da UI (Garantir que os elementos existam antes de qualquer evento de socket)
-    function buildInitialUI() {
-        chatTabsList.innerHTML = `
+    connect(chatId) {
+        this.chatId = chatId;
+
+        // Se já existe socket, verificar estado
+        if (this.socket) {
+            if (this.socket.connected) {
+                console.log("[ChatService] Socket já conectado. Reutilizando.");
+                this.joinRoom(); // Garante que estamos na sala certa
+                return;
+            } else {
+                console.log("[ChatService] Socket desconectado. Reconectando...");
+                this.socket.connect();
+                return;
+            }
+        }
+
+        console.log("[ChatService] Criando nova conexão Socket.IO...");
+        // forceNew: true garante uma conexão limpa se houve problemas anteriores,
+        // mas como gerenciamos o singleton, podemos usar padrão ou forceNew.
+        // Vamos usar padrão para evitar overhead, já que gerenciamos o objeto.
+        this.socket = io({
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        });
+
+        this._setupInternalListeners();
+    }
+
+    disconnect() {
+        if (this.socket) {
+            console.log("[ChatService] Desconectando socket...");
+            this.socket.disconnect();
+            this.socket = null;
+            this.isConnected = false;
+        }
+    }
+
+    _setupInternalListeners() {
+        this.socket.on('connect', () => {
+            console.log("[ChatService] Conectado!");
+            this.isConnected = true;
+            this.joinRoom();
+        });
+
+        this.socket.on('disconnect', () => {
+            console.log("[ChatService] Desconectado.");
+            this.isConnected = false;
+        });
+
+        // Eventos de Negócio
+        this.socket.on('new_general_message', (msg) => this.notify('general_message', msg));
+        this.socket.on('new_private_message', (msg) => this.notify('private_message', msg));
+
+        // Histórico
+        this.socket.on('general_messages_history', (data) => this.notify('history_general', data));
+        this.socket.on('private_messages_history', (data) => this.notify('history_private', data));
+
+        // Lista de Usuários
+        this.socket.on('update_user_list', (data) => this.notify('user_list_update', data));
+    }
+
+    joinRoom() {
+        if (!this.socket || !this.chatId) return;
+        console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
+        this.socket.emit('join', { chat_id: this.chatId });
+        this.loadGeneralHistory();
+    }
+
+    loadGeneralHistory() {
+        if (this.socket && this.chatId) {
+            console.log("[ChatService] Solicitando histórico geral...");
+            this.socket.emit('load_general_messages', { chat_id: this.chatId });
+        }
+    }
+
+    loadPrivateHistory(targetUsername) {
+        if (this.socket && this.chatId) {
+            const myUsername = window.myUsername;
+            this.socket.emit('load_private_messages', {
+                myUsername: myUsername,
+                target_username: targetUsername,
+                chat_id: this.chatId
+            });
+        }
+    }
+
+    sendGeneralMessage(content) {
+        if (!this.socket) return;
+        const myUsername = window.myUsername;
+        this.socket.emit('general_message', {
+            username: myUsername,
+            chat_id: this.chatId,
+            content: content
+        });
+    }
+
+    sendPrivateMessage(targetUsername, content) {
+        if (!this.socket) return;
+        const myUsername = window.myUsername;
+        this.socket.emit('private_message', {
+            username: myUsername,
+            target_username: targetUsername,
+            content: content,
+            chat_id: this.chatId
+        });
+    }
+
+    // --- Sistema de Pub/Sub para a UI ---
+    subscribe(event, callback) {
+        if (!this.listeners.has(event)) {
+            this.listeners.set(event, new Set());
+        }
+        this.listeners.get(event).add(callback);
+    }
+
+    unsubscribe(event, callback) {
+        if (this.listeners.has(event)) {
+            this.listeners.get(event).delete(callback);
+        }
+    }
+
+    notify(event, data) {
+        if (this.listeners.has(event)) {
+            this.listeners.get(event).forEach(cb => cb(data));
+        }
+    }
+}
+
+// --- ChatUI: Gerencia o DOM e Interação (View) ---
+class ChatUI {
+    constructor() {
+        this.service = new ChatService(); // Pega o singleton
+        this.myUsername = window.myUsername;
+        this.myUserId = window.myUserId;
+        this.openPrivateChats = new Set();
+
+        // Elementos DOM (assumindo que o HTML já foi injetado)
+        this.dom = {
+            userList: document.getElementById('user-list'),
+            tabsList: document.getElementById('chat-tabs-list'),
+            tabsContent: document.getElementById('chat-tabs-content'),
+            form: document.getElementById('chatForm'),
+            input: document.getElementById('myMessage')
+        };
+
+        // Bindings para não perder o 'this'
+        this.handleUserClick = this.handleUserClick.bind(this);
+        this.handleTabClose = this.handleTabClose.bind(this);
+        this.handleSubmit = this.handleSubmit.bind(this);
+
+        // Callbacks do Service
+        this.onGeneralMessage = this.onGeneralMessage.bind(this);
+        this.onPrivateMessage = this.onPrivateMessage.bind(this);
+        this.onHistoryGeneral = this.onHistoryGeneral.bind(this);
+        this.onHistoryPrivate = this.onHistoryPrivate.bind(this);
+        this.onUserListUpdate = this.onUserListUpdate.bind(this);
+    }
+
+    init() {
+        if (!this.dom.tabsList || !this.dom.tabsContent) {
+            console.error("[ChatUI] Elementos DOM não encontrados!");
+            return;
+        }
+
+        console.log("[ChatUI] Inicializando UI...");
+        this.buildInitialLayout();
+        this.attachDOMListeners();
+        this.subscribeToService();
+    }
+
+    destroy() {
+        console.log("[ChatUI] Destruindo UI e limpando listeners...");
+        this.detachDOMListeners();
+        this.unsubscribeFromService();
+        // Não desconectamos o service, pois ele pode manter a conexão viva se desejado,
+        // ou o show_session.js pode chamar service.disconnect() explicitamente.
+    }
+
+    buildInitialLayout() {
+        // Aba Geral Padrão
+        this.dom.tabsList.innerHTML = `
             <li class="nav-item">
-                <button class="nav-link active" id="tab-btn-geral" data-bs-toggle="tab" data-bs-target="#tab-pane-geral" type="button" role="tab" aria-controls="tab-pane-geral" aria-selected="true">Geral</button>
+                <button class="nav-link active" id="tab-btn-geral" data-bs-toggle="tab" data-bs-target="#tab-pane-geral" type="button" role="tab">Geral</button>
             </li>`;
-        chatTabsContent.innerHTML = `
+        this.dom.tabsContent.innerHTML = `
             <div class="tab-pane fade show active" id="tab-pane-geral" role="tabpanel">
                 <ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>
             </div>`;
     }
 
-    // Constrói a UI imediatamente
-    buildInitialUI();
-
-    // 3. Configuração do Socket
-    let socket;
-
-    if (window.chatSocket) {
-        console.log("Reutilizando socket existente...");
-        socket = window.chatSocket;
-        socket.removeAllListeners();
-        if (!socket.connected) {
-            socket.connect();
-        }
-    } else {
-        console.log("Criando nova conexão socket...");
-        socket = io({ forceNew: true });
-        window.chatSocket = socket;
+    attachDOMListeners() {
+        this.dom.userList.addEventListener('click', this.handleUserClick);
+        this.dom.tabsList.addEventListener('click', this.handleTabClose);
+        this.dom.form.addEventListener('submit', this.handleSubmit);
     }
 
-    // Estado para controlar as conversas privadas abertas
-    let openPrivateChats = new Set();
-
-    // --- FUNÇÕES PRINCIPAIS ---
-
-    /**
-     * Cria e abre uma nova aba de chat privado
-     * @param {string} userId - O ID do usuário com quem conversar
-     * @param {string} recive_username - O nome do usuário
-     */
-    function openPrivateChat(sender_username, target_username) {
-
-        // console.log(`Abrindo chat privado com ${target_username} (ID: ${userId})`);
-        // console.log(`Usuário atual: ${myUsername} (ID: ${myUserId})`);
-        // console.log(userId == myUserId && target_username == myUsername);
-        // Não abrir uma aba para se mesmo
-
-        console.log(`bloqueando abrir novo chat: `, myUsername == target_username);
-        console.log(`abrindo chat privado com ${target_username} (meu username: ${myUsername})`);
-
-        if (target_username == myUsername || openPrivateChats.has(target_username)) {
-            console.warn("Chat já aberto ou tentativa de abrir consigo mesmo. Ignorando.");
-            return;
-        }
-
-        console.log("oiiii");
-        // console.log(`Abrindo chat privado com ${target_username} meu username: ${myUsername}`);
-        // 1. Criar o botão da aba (com ícone de fechar)
-        const tabButton = document.createElement('li');
-        tabButton.className = 'nav-item';
-        tabButton.innerHTML = `
-            <button class="nav-link"  id="tab-btn-${target_username}" data-bs-toggle="tab" data-bs-target="#tab-pane-${target_username}" type="button" role="tab" aria-controls="tab-pane-${target_username}" aria-selected="false">
-                ${target_username}
-                <span class="btn-close btn-close-sm ms-2" data-user-id="${target_username}" aria-label="Close"></span>
-            </button>
-        `;
-        chatTabsList.appendChild(tabButton);
-
-        // 2. Criar o painel de conteúdo da aba
-        const tabPane = document.createElement('div');
-        tabPane.className = 'tab-pane fade';
-        tabPane.id = `tab-pane-${target_username}`;
-        tabPane.role = 'tabpanel';
-        tabPane.innerHTML = `<ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>`; // Área para mensagens
-        chatTabsContent.appendChild(tabPane);
-        chatTabsContent.scrollTop = chatTabsContent.scrollHeight;
-
-        // 3. Adicionar ao estado e ativar a nova aba
-
-        openPrivateChats.add(target_username);
-        const newTab = new bootstrap.Tab(tabButton.querySelector('button'));
-        newTab.show();
-
-        // 4. Pedir ao servidor o histórico de mensagens desta conversa privada
-        socket.emit('load_private_messages', {
-            myUsername: sender_username,
-            target_username: target_username,
-            // with_user_id: userId,
-            chat_id: chatId
-        });
+    detachDOMListeners() {
+        if (this.dom.userList) this.dom.userList.removeEventListener('click', this.handleUserClick);
+        if (this.dom.tabsList) this.dom.tabsList.removeEventListener('click', this.handleTabClose);
+        if (this.dom.form) this.dom.form.removeEventListener('submit', this.handleSubmit);
     }
 
-    /**
-     * Adiciona uma mensagem de texto a um painel de chat específico
-     * @param {string} paneId - ID do painel de conteúdo (ex: 'tab-pane-geral' ou 'tab-pane-123')
-     * @param {object} message - Objeto da mensagem {username, content}
-     */
-    function addMessageToPane(paneId, message) {
-        // console.log(`Adicionando mensagem ao painel ${paneId}: >>> `, message);
-
-        const pane = document.getElementById(paneId);
-        if (!pane) {
-            console.warn(`Painel de chat ${paneId} não encontrado. Tentando novamente em breve...`);
-            // Pode ser que o DOM ainda não tenha atualizado completamente.
-            return;
-        }
-        // console.log('3 - oii >> ', pane);
-
-        const messagesUl = pane.querySelector('.chat-messages');
-        if (!messagesUl) {
-            console.error("Lista de mensagens não encontrada no painel.");
-            return;
-        }
-
-        const item = document.createElement('li');
-
-        // console.log(item);
-
-        if (message.content == null || message.content == undefined) {
-            console.log(message.content, chatId);
-            console.warn("Mensagem sem conteúdo. Ignorando.");
-            return;
-        }
-
-        if (message.content.includes("aviso -")) {
-            item.className = `d-flex flex-column my-2 item-warning align-items-center green`;
-            item.innerHTML = message.content.replace("aviso - ", "");
-
-        } else {
-            item.className = `d-flex flex-column my-2 ${message.username === myUsername ? 'align-items-end' : 'align-items-start'}`;
-
-            item.innerHTML = `
-            <div class="m-3 message ${message.username === myUsername ? 'my-message' : 'other-message'}">
-            <span class="username">${message.username}</span>
-            <span>${message.content}</span>
-            </div>
-            `;
-        }
-
-        messagesUl.appendChild(item);
-        messagesUl.scrollTop = messagesUl.scrollHeight; // Auto-scroll
+    subscribeToService() {
+        this.service.subscribe('general_message', this.onGeneralMessage);
+        this.service.subscribe('private_message', this.onPrivateMessage);
+        this.service.subscribe('history_general', this.onHistoryGeneral);
+        this.service.subscribe('history_private', this.onHistoryPrivate);
+        this.service.subscribe('user_list_update', this.onUserListUpdate);
     }
 
-    // --- MANIPULADORES DE EVENTOS (EVENT LISTENERS) ---
+    unsubscribeFromService() {
+        this.service.unsubscribe('general_message', this.onGeneralMessage);
+        this.service.unsubscribe('private_message', this.onPrivateMessage);
+        this.service.unsubscribe('history_general', this.onHistoryGeneral);
+        this.service.unsubscribe('history_private', this.onHistoryPrivate);
+        this.service.unsubscribe('user_list_update', this.onUserListUpdate);
+    }
 
-    // Lidar com cliques na lista de usuários para abrir chats
-    userList.addEventListener('click', function (e) {
+    // --- Lógica de UI ---
+
+    handleUserClick(e) {
         const userItem = e.target.closest('[data-user-id]');
         if (userItem) {
-            const receiveUserId = userItem.dataset.userId;
-            const receiveUserName = userItem.dataset.userName;
-            console.log(`Clicou no usuário: ${receiveUserName} (ID: ${receiveUserId})`);
-
-            if (openPrivateChats.has(receiveUserName)) {
-                console.warn(`Aba Já aberta!`);
-            } else {
-                openPrivateChat(myUsername, receiveUserName);
-            }
+            const targetUsername = userItem.dataset.userName;
+            this.openPrivateChatTab(targetUsername);
         }
-    });
+    }
 
-    // Lidar com o fechamento de uma aba
-    chatTabsList.addEventListener('click', function (e) {
+    handleTabClose(e) {
         if (e.target.classList.contains('btn-close')) {
-            e.stopPropagation(); // Impede que o clique ative a aba antes de fechar
-
-            const targetUsername = e.target.dataset.userId;
-            console.log(`targetUsername: ${targetUsername}`);
-
-            // Remove o botão e o painel
-            const tabButton = document.querySelector(`#tab-btn-${targetUsername}`).parentElement;
-            const tabPane = document.querySelector(`#tab-pane-${targetUsername}`);
-            tabButton.remove();
-            tabPane.remove();
-
-            // Remove do estado
-            openPrivateChats.delete(targetUsername);
-
-            // Ativa a aba "Geral" por padrão
-            const generalTab = new bootstrap.Tab(document.querySelector('#tab-btn-geral'));
-            generalTab.show();
+            e.stopPropagation();
+            const targetUsername = e.target.dataset.userId; // Dataset armazena o username no HTML gerado
+            this.closePrivateChatTab(targetUsername);
         }
-    });
+    }
 
-    // Lidar com o envio de mensagem
-    chatForm.addEventListener('submit', function (e) {
+    handleSubmit(e) {
         e.preventDefault();
-        const message = messageInput.value.trim();
-        if (message === "") return;
+        const msg = this.dom.input.value.trim();
+        if (!msg) return;
 
-        // Descobrir qual aba está ativa
-        const activeTab = document.querySelector('#chat-tabs-list .nav-link.active');
-        const activeTabUsername = activeTab.id; // ex: 'tab-btn-geral' ou 'tab-btn-usename'
-        // console.log(">>>>>  ", activeTab)
+        const activeTab = this.dom.tabsList.querySelector('.nav-link.active');
+        if (!activeTab) return;
 
-        if (activeTabUsername === 'tab-btn-geral') {
-            socket.emit('general_message', {
-                username: myUsername,
-                chat_id: chatId,
-                content: message
-            });
+        if (activeTab.id === 'tab-btn-geral') {
+            this.service.sendGeneralMessage(msg);
         } else {
-            const targetUsername = activeTabUsername.replace('tab-btn-', '');
-            // const targetUserName = 
-            // console.log(activeTab);
-            // console.log(`Enviando mensagem privada para o usuário: ${targetUsername}`);
-            // console.log("1 - oiiii");
-            socket.emit('private_message', {
-                username: myUsername,
-                target_username: targetUsername,
-                content: message,
-                chat_id: chatId
-            });
-            // Adiciona a mensagem à sua própria tela imediatamente
-            // addMessageToPane(`tab-pane-${targetUserId}`, { username: myUsername, content: message });
+            const targetUsername = activeTab.textContent.trim(); // Simplificado, ou pegar do ID
+            // O ID do botão é tab-btn-{username}
+            const targetUserFromId = activeTab.id.replace('tab-btn-', '');
+            this.service.sendPrivateMessage(targetUserFromId, msg);
         }
-
-        messageInput.value = "";
-    });
-
-
-    // --- SOCKET.IO LISTENERS ---
-
-    // Função auxiliar para ações de conexão (join, load_history)
-    function onSocketConnected() {
-        console.log('Conectado ao servidor (ou reconectado)!');
-        socket.emit('join', { chat_id: chatId });
-        // Garante que o histórico seja carregado sempre que conectar/reconectar
-        socket.emit('load_general_messages', { chat_id: chatId });
+        this.dom.input.value = "";
     }
 
-    socket.on('connect', onSocketConnected);
-
-    // Se reutilizamos um socket já conectado, precisamos "fingir" o evento connect
-    // ou simplesmente executar as ações de entrada na sala.
-    if (socket.connected) {
-        console.log("Socket já estava conectado. Executando ações de entrada...");
-        onSocketConnected();
-    }
-
-    socket.on('new_private_message', function (message) {
-        const sender_username = message.username;
-        const target_username = message.target_username;
-
-        if (myUsername !== sender_username && myUsername !== target_username) {
+    openPrivateChatTab(targetUsername) {
+        if (targetUsername === this.myUsername || this.openPrivateChats.has(targetUsername)) {
+            // Foca na aba existente se já aberta
+            const existingBtn = document.getElementById(`tab-btn-${targetUsername}`);
+            if (existingBtn) {
+                const tab = new bootstrap.Tab(existingBtn);
+                tab.show();
+            }
             return;
         }
 
-        const isSender = myUsername === sender_username;
-        const otherUsername = isSender ? target_username : sender_username;
-        const paneId = `tab-pane-${otherUsername}`;
+        console.log(`[ChatUI] Abrindo aba privada para: ${targetUsername}`);
 
-        // Abrir o chat com o outro usuário (remetente ou destinatário)
-        openPrivateChat(myUsername, otherUsername);
+        // Botão da Aba
+        const li = document.createElement('li');
+        li.className = 'nav-item';
+        li.innerHTML = `
+            <button class="nav-link" id="tab-btn-${targetUsername}" data-bs-toggle="tab" data-bs-target="#tab-pane-${targetUsername}" type="button" role="tab">
+                ${targetUsername}
+                <span class="btn-close btn-close-sm ms-2" data-user-id="${targetUsername}"></span>
+            </button>
+        `;
+        this.dom.tabsList.appendChild(li);
 
-        // Adicionar a mensagem à aba correta
-        addMessageToPane(paneId, message);
-    });
+        // Conteúdo da Aba
+        const div = document.createElement('div');
+        div.className = 'tab-pane fade';
+        div.id = `tab-pane-${targetUsername}`;
+        div.role = 'tabpanel';
+        div.innerHTML = `<ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>`;
+        this.dom.tabsContent.appendChild(div);
 
+        this.openPrivateChats.add(targetUsername);
 
-    socket.on('update_user_list', function (userListDataString) {
-        console.log("Atualizando lista de usuários...");
-        console.log("Dados recebidos (string):", userListDataString);
+        // Ativar a nova aba
+        const newTab = new bootstrap.Tab(li.querySelector('button'));
+        newTab.show();
 
-        // 2. Usamos JSON.parse() para transformar a string em um array de objetos JavaScript.
-        const parsedUsers = JSON.parse(userListDataString);
-        console.log("Dados convertidos (array):", parsedUsers);
+        // Carregar histórico
+        this.service.loadPrivateHistory(targetUsername);
+    }
 
-        // 3. Limpamos o CONTEÚDO do elemento <ul>.
-        userList.innerHTML = '';
+    closePrivateChatTab(targetUsername) {
+        console.log(`[ChatUI] Fechando aba de: ${targetUsername}`);
+        const btn = document.getElementById(`tab-btn-${targetUsername}`);
+        const pane = document.getElementById(`tab-pane-${targetUsername}`);
 
-        // 4. Agora, iteramos sobre o ARRAY 'parsedUsers', que é um array de verdade.
-        parsedUsers.forEach(user => {
-            console.log("Adicionando usuário:", user);
-            // Não mostra você mesmo na lista para iniciar chat
-            // Certifique-se que 'myUserId' está definido e é um número ou string consistente com 'user.id'
-            if (user.username == myUsername && user.id == myUserId) return;
+        if (btn) btn.parentElement.remove();
+        if (pane) pane.remove();
 
-            const item = document.createElement('a');
-            item.href = '#';
-            item.className = 'list-group-item list-group-item-action';
-            item.dataset.userId = user.id;
-            item.dataset.userName = user.username;
+        this.openPrivateChats.delete(targetUsername);
 
-            // Adiciona o tipo de usuário (Estudante/Professor) para ficar mais claro
-            item.textContent = `${user.username} (${user.type})`;
+        // Voltar para Geral
+        const geralBtn = document.getElementById('tab-btn-geral');
+        if (geralBtn) {
+            const tab = new bootstrap.Tab(geralBtn);
+            tab.show();
+        }
+    }
 
-            // 5. Adicionamos o novo elemento <a> ao elemento <ul> da página.
-            userList.appendChild(item);
-        });
-    });
-
-    socket.on('general_message', function (message) {
-        addMessageToPane('tab-pane-geral', message);
-    });
-
-    socket.on('new_general_message', function (message) {
-        // Adiciona a mensagem à aba "Geral"
-        addMessageToPane('tab-pane-geral', message);
-    });
-
-    // socket.on('private_message', function (message) {
-    //     // A mensagem vem de 'sender_id'. O outro participante é você.
-    //     const otherUserId = message.sender_id;
-    //     // console.log(">>>>>>>>>>>>>>>>>>>>>>> ")
-    //     // Abre a aba se não estiver aberta
-    //     console.log("oiiii")
-    //     openPrivateChat(otherUserId, message.username);
-    //     // Adiciona a mensagem
-    //     addMessageToPane(`tab-pane-${otherUserId}`, message);
-    // });
-
-    socket.on('general_messages_history', function (messages) {
-        console.log('Carregando histórico de mensagens gerais...');
-        console.log(messages);
-        const pane = document.getElementById('tab-pane-geral');
-        if (!pane) return;
-        const messagesUl = pane.querySelector('.chat-messages');
-        if (!messagesUl) return;
-
-        messagesUl.innerHTML = ''; // Limpa antes de carregar
-        messages['messages'].forEach(msg => addMessageToPane('tab-pane-geral', msg));
-    });
-
-    socket.on('private_messages_history', function (data) {
-        const paneId = `tab-pane-${data.target_username}`;
+    addMessageToPane(paneId, message) {
         const pane = document.getElementById(paneId);
-        if (!pane) return;
+        if (!pane) return; // UI não pronta ou aba fechada
 
-        const messagesUl = pane.querySelector('.chat-messages');
-        messagesUl.innerHTML = ''; // Limpa antes de carregar
-        // console.log(">>> ", data)
-        data.messages.forEach(msg => addMessageToPane(paneId, msg));
-    });
+        const ul = pane.querySelector('.chat-messages');
+        if (!ul) return;
 
-};
+        const li = document.createElement('li');
+        const isMyMessage = message.username === this.myUsername;
+
+        if (message.content && message.content.includes("aviso -")) {
+            li.className = `d-flex flex-column my-2 item-warning align-items-center green`;
+            li.innerHTML = `<span class="badge bg-info text-dark">${message.content.replace("aviso - ", "")}</span>`;
+        } else {
+            li.className = `d-flex flex-column my-2 ${isMyMessage ? 'align-items-end' : 'align-items-start'}`;
+            li.innerHTML = `
+                <div class="m-2 p-2 rounded message ${isMyMessage ? 'bg-primary text-white' : 'bg-light border'}">
+                    <strong class="d-block small ${isMyMessage ? 'text-white-50' : 'text-muted'}">${message.username}</strong>
+                    <span>${message.content}</span>
+                </div>
+            `;
+        }
+        ul.appendChild(li);
+        ul.scrollTop = ul.scrollHeight;
+    }
+
+    // --- Handlers de Eventos do Service ---
+
+    onGeneralMessage(msg) {
+        this.addMessageToPane('tab-pane-geral', msg);
+    }
+
+    onPrivateMessage(msg) {
+        // Lógica: se recebi mensagem de X, abro a aba de X se não existir
+        const sender = msg.username;
+        const target = msg.target_username;
+
+        let chatPartner = (sender === this.myUsername) ? target : sender;
+
+        // Se a aba não existe, abre
+        if (!this.openPrivateChats.has(chatPartner)) {
+            this.openPrivateChatTab(chatPartner);
+        }
+
+        this.addMessageToPane(`tab-pane-${chatPartner}`, msg);
+    }
+
+    onHistoryGeneral(data) {
+        console.log("[ChatUI] Histórico geral recebido.", data);
+        const pane = document.getElementById('tab-pane-geral');
+        if (pane) {
+            const ul = pane.querySelector('.chat-messages');
+            if (ul) {
+                ul.innerHTML = ''; // Limpa
+                if (data.messages) {
+                    data.messages.forEach(msg => this.addMessageToPane('tab-pane-geral', msg));
+                }
+            }
+        }
+    }
+
+    onHistoryPrivate(data) {
+        // data = { target_username, with_user_id, messages: [] }
+        const partner = data.target_username; // Quem eu estou conversando
+        // Verifica se é o histórico correto para a aba aberta?
+        // O backend envia 'target_username' no payload para ajudar
+
+        const paneId = `tab-pane-${partner}`;
+        const pane = document.getElementById(paneId);
+        if (pane) {
+            const ul = pane.querySelector('.chat-messages');
+            if (ul) {
+                ul.innerHTML = '';
+                if (data.messages) {
+                    data.messages.forEach(msg => this.addMessageToPane(paneId, msg));
+                }
+            }
+        }
+    }
+
+    onUserListUpdate(userListDataString) {
+        try {
+            const users = JSON.parse(userListDataString);
+            this.dom.userList.innerHTML = '';
+
+            users.forEach(user => {
+                if (user.username === this.myUsername) return; // Não mostrar a si mesmo
+
+                const a = document.createElement('a');
+                a.href = '#';
+                a.className = 'list-group-item list-group-item-action';
+                a.dataset.userId = user.id;
+                a.dataset.userName = user.username;
+                a.textContent = `${user.username} (${user.type})`;
+
+                this.dom.userList.appendChild(a);
+            });
+        } catch (e) {
+            console.error("Erro ao processar lista de usuários:", e);
+        }
+    }
+}
+
+// --- Função Global de Inicialização ---
+// Esta função é chamada pelo show_session.js quando o fragmento é carregado.
+// Retorna a instância da UI para que o chamador possa destruí-la depois.
+
+function initializeChatComponent() {
+    // 1. Inicializa o Singleton do Service (se não existir) e conecta
+    const service = new ChatService();
+    service.connect(window.chatId);
+
+    // 2. Inicializa a UI
+    const ui = new ChatUI();
+    ui.init();
+
+    // 3. Retorna o objeto UI para controle de lifecycle externo
+    return ui;
+}

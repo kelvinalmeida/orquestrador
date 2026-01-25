@@ -30,6 +30,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("student-answers-card").innerHTML = '<em>Sem respostas de exercícios enviadas nesta sessão.</em>';
     }
 
+    // Variável para armazenar a instância atual da UI do Chat
+    let currentChatUI = null;
 
     console.log("Session ID: ", session_id);
 
@@ -78,7 +80,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             loadedScripts++;
                             // Só inicializa se for o último script carregado ou se só houver ele
                             if (loadedScripts === totalScripts && typeof initializeChatComponent === "function") {
-                                initializeChatComponent();
+                                if (currentChatUI) {
+                                    currentChatUI.destroy();
+                                }
+                                currentChatUI = initializeChatComponent();
                             }
                         };
                         document.body.appendChild(newScript);
@@ -90,7 +95,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Caso não tenha scripts externos, mas tenha inline com a função já definida
                 if (totalScripts === 0 && typeof initializeChatComponent === "function") {
-                    initializeChatComponent();
+                    if (currentChatUI) {
+                        currentChatUI.destroy();
+                    }
+                    currentChatUI = initializeChatComponent();
                 }
 
                 const chatContainer = document.getElementById("tatic_here");
@@ -635,11 +643,19 @@ document.addEventListener("DOMContentLoaded", () => {
              if (chatElement) {
                  chatElement.remove();
              }
-             if (window.chatSocket) {
-                 console.log("Desconectando chat socket (cleanup)...");
-                 window.chatSocket.disconnect();
-                 window.chatSocket = null;
+
+             // Limpeza correta da UI usando o método destroy() da classe
+             if (currentChatUI) {
+                 console.log("Limpando instância da UI do Chat...");
+                 currentChatUI.destroy();
+                 currentChatUI = null;
              }
+
+             // O Service (socket) pode permanecer conectado ou ser desconectado aqui
+             // Se quisermos desconectar totalmente ao sair da aba:
+             // if (window.ChatService && window.ChatService.instance) {
+             //    window.ChatService.instance.disconnect();
+             // }
         }
 
         let envio_informacao_aviso = document.getElementById("envio_informacao_aviso");
