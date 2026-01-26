@@ -76,19 +76,13 @@ if (typeof window.ChatService === 'undefined') {
 
         // Lista de Usuários
         this.socket.on('update_user_list', (data) => this.notify('user_list_update', data));
+        this.socket.on('update_online_users', (data) => this.notify('online_users_update', data));
     }
 
         joinRoom() {
             if (!this.socket || !this.chatId) return;
             console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
             this.socket.emit('join', { chat_id: this.chatId });
-
-            // Envia mensagem de "Entrou na sala" uma vez por conexão/reconexão.
-            // Isso substitui a lógica antiga que causava loop infinito.
-            if (window.myUsername) {
-                this.sendGeneralMessage(`aviso - ${window.myUsername} entrou na sala geral.`);
-            }
-
             this.loadGeneralHistory();
         }
 
@@ -182,6 +176,7 @@ if (typeof window.ChatUI === 'undefined') {
         this.onHistoryGeneral = this.onHistoryGeneral.bind(this);
         this.onHistoryPrivate = this.onHistoryPrivate.bind(this);
         this.onUserListUpdate = this.onUserListUpdate.bind(this);
+        this.onOnlineUsersUpdate = this.onOnlineUsersUpdate.bind(this);
     }
 
     init() {
@@ -234,6 +229,7 @@ if (typeof window.ChatUI === 'undefined') {
         this.service.subscribe('history_general', this.onHistoryGeneral);
         this.service.subscribe('history_private', this.onHistoryPrivate);
         this.service.subscribe('user_list_update', this.onUserListUpdate);
+        this.service.subscribe('online_users_update', this.onOnlineUsersUpdate);
     }
 
     unsubscribeFromService() {
@@ -242,6 +238,7 @@ if (typeof window.ChatUI === 'undefined') {
         this.service.unsubscribe('history_general', this.onHistoryGeneral);
         this.service.unsubscribe('history_private', this.onHistoryPrivate);
         this.service.unsubscribe('user_list_update', this.onUserListUpdate);
+        this.service.unsubscribe('online_users_update', this.onOnlineUsersUpdate);
     }
 
     // --- Lógica de UI ---
@@ -436,16 +433,54 @@ if (typeof window.ChatUI === 'undefined') {
 
                     const a = document.createElement('a');
                     a.href = '#';
-                    a.className = 'list-group-item list-group-item-action';
+                    a.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
                     a.dataset.userId = user.id;
                     a.dataset.userName = user.username;
-                    a.textContent = `${user.username} (${user.type})`;
+
+                    // Indicador de Status (padrão vermelho/offline)
+                    // Usaremos um span com classe para manipular a cor
+                    a.innerHTML = `
+                        <span>${user.username} <small class="text-muted">(${user.type})</small></span>
+                        <span class="status-indicator rounded-circle bg-danger border border-light"
+                              style="width: 12px; height: 12px; display: inline-block; box-shadow: 0 0 2px #000;"
+                              title="Offline">
+                        </span>
+                    `;
 
                     this.dom.userList.appendChild(a);
                 });
             } catch (e) {
                 console.error("Erro ao processar lista de usuários:", e);
             }
+        }
+
+        onOnlineUsersUpdate(onlineUserIds) {
+            // onlineUserIds é uma lista de IDs [1, 4, 10, ...]
+            if (!this.dom.userList) return;
+
+            // Converter para Set para busca rápida (IDs podem vir como strings ou numbers do JSON)
+            const onlineSet = new Set(onlineUserIds.map(id => String(id)));
+
+            // Iterar sobre a lista DOM
+            const userItems = this.dom.userList.querySelectorAll('[data-user-id]');
+            userItems.forEach(item => {
+                const userId = item.dataset.userId;
+                const indicator = item.querySelector('.status-indicator');
+
+                if (indicator) {
+                    if (onlineSet.has(String(userId))) {
+                        // Online: Verde Brilhante
+                        indicator.className = 'status-indicator rounded-circle bg-success border border-light';
+                        indicator.style.boxShadow = '0 0 8px #0f0'; // Brilho verde
+                        indicator.title = "Online";
+                    } else {
+                        // Offline: Vermelho
+                        indicator.className = 'status-indicator rounded-circle bg-danger border border-light';
+                        indicator.style.boxShadow = 'none';
+                        indicator.title = "Offline";
+                    }
+                }
+            });
         }
     };
 }
