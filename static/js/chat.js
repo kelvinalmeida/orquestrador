@@ -209,6 +209,9 @@ if (typeof window.ChatUI === 'undefined') {
             <div class="tab-pane fade show active" id="tab-pane-geral" role="tabpanel">
                 <ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>
             </div>`;
+
+        // Mostrar Loading no Geral imediatamente
+        this.showLoading('tab-pane-geral');
     }
 
     attachDOMListeners() {
@@ -316,6 +319,9 @@ if (typeof window.ChatUI === 'undefined') {
         const newTab = new bootstrap.Tab(li.querySelector('button'));
         newTab.show();
 
+        // Mostrar Loading na nova aba privada
+        this.showLoading(`tab-pane-${targetUsername}`);
+
         // Carregar histórico
         this.service.loadPrivateHistory(targetUsername);
     }
@@ -344,6 +350,10 @@ if (typeof window.ChatUI === 'undefined') {
 
         const ul = pane.querySelector('.chat-messages');
         if (!ul) return;
+
+        // Se houver indicador de loading ou "sem mensagens", removemos
+        const indicators = ul.querySelectorAll('.loading-indicator, .no-messages-indicator');
+        indicators.forEach(el => el.remove());
 
         const li = document.createElement('li');
         const isMyMessage = message.username === this.myUsername;
@@ -396,9 +406,11 @@ if (typeof window.ChatUI === 'undefined') {
         if (pane) {
             const ul = pane.querySelector('.chat-messages');
             if (ul) {
-                ul.innerHTML = ''; // Limpa
-                if (data.messages) {
+                ul.innerHTML = ''; // Limpa loading
+                if (data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => this.addMessageToPane('tab-pane-geral', msg));
+                } else {
+                    this.showNoMessages('tab-pane-geral');
                 }
             }
         }
@@ -407,20 +419,50 @@ if (typeof window.ChatUI === 'undefined') {
     onHistoryPrivate(data) {
         // data = { target_username, with_user_id, messages: [] }
         const partner = data.target_username; // Quem eu estou conversando
-        // Verifica se é o histórico correto para a aba aberta?
-        // O backend envia 'target_username' no payload para ajudar
 
         const paneId = `tab-pane-${partner}`;
         const pane = document.getElementById(paneId);
         if (pane) {
             const ul = pane.querySelector('.chat-messages');
             if (ul) {
-                ul.innerHTML = '';
-                if (data.messages) {
+                ul.innerHTML = ''; // Limpa loading
+                if (data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => this.addMessageToPane(paneId, msg));
+                } else {
+                    this.showNoMessages(paneId);
                 }
             }
         }
+    }
+
+    showLoading(paneId) {
+        const pane = document.getElementById(paneId);
+        if (!pane) return;
+        const ul = pane.querySelector('.chat-messages');
+        if (!ul) return;
+
+        ul.innerHTML = `
+            <li class="text-center my-5 loading-indicator">
+                <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+                <p class="mt-2 text-muted animate-pulse">Carregando mensagens...</p>
+            </li>
+        `;
+    }
+
+    showNoMessages(paneId) {
+        const pane = document.getElementById(paneId);
+        if (!pane) return;
+        const ul = pane.querySelector('.chat-messages');
+        if (!ul) return;
+
+        ul.innerHTML = `
+            <li class="text-center my-5 no-messages-indicator">
+                <i class="bi bi-chat-square-dots display-1 text-muted opacity-25"></i>
+                <p class="mt-3 text-muted">Sem mensagens.</p>
+            </li>
+        `;
     }
 
         onUserListUpdate(userListDataString) {
