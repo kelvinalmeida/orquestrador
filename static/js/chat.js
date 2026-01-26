@@ -1,20 +1,22 @@
 // --- ChatService: Gerencia a conexão Socket.IO (Singleton) ---
-class ChatService {
-    constructor() {
-        if (ChatService.instance) {
-            return ChatService.instance;
+// Usamos uma verificação global para evitar redeclaração se o script for reinjetado.
+if (typeof window.ChatService === 'undefined') {
+    window.ChatService = class ChatService {
+        constructor() {
+            if (window.ChatService.instance) {
+                return window.ChatService.instance;
+            }
+
+            console.log("[ChatService] Inicializando serviço...");
+            this.socket = null;
+            this.listeners = new Map(); // Map<EventName, Set<Callback>>
+            this.chatId = null;
+            this.isConnected = false;
+
+            window.ChatService.instance = this;
         }
 
-        console.log("[ChatService] Inicializando serviço...");
-        this.socket = null;
-        this.listeners = new Map(); // Map<EventName, Set<Callback>>
-        this.chatId = null;
-        this.isConnected = false;
-
-        ChatService.instance = this;
-    }
-
-    connect(chatId) {
+        connect(chatId) {
         this.chatId = chatId;
 
         // Se já existe socket, verificar estado
@@ -76,12 +78,19 @@ class ChatService {
         this.socket.on('update_user_list', (data) => this.notify('user_list_update', data));
     }
 
-    joinRoom() {
-        if (!this.socket || !this.chatId) return;
-        console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
-        this.socket.emit('join', { chat_id: this.chatId });
-        this.loadGeneralHistory();
-    }
+        joinRoom() {
+            if (!this.socket || !this.chatId) return;
+            console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
+            this.socket.emit('join', { chat_id: this.chatId });
+
+            // Envia mensagem de "Entrou na sala" uma vez por conexão/reconexão.
+            // Isso substitui a lógica antiga que causava loop infinito.
+            if (window.myUsername) {
+                this.sendGeneralMessage(`aviso - ${window.myUsername} entrou na sala geral.`);
+            }
+
+            this.loadGeneralHistory();
+        }
 
     loadGeneralHistory() {
         if (this.socket && this.chatId) {
@@ -136,19 +145,21 @@ class ChatService {
         }
     }
 
-    notify(event, data) {
-        if (this.listeners.has(event)) {
-            this.listeners.get(event).forEach(cb => cb(data));
+        notify(event, data) {
+            if (this.listeners.has(event)) {
+                this.listeners.get(event).forEach(cb => cb(data));
+            }
         }
-    }
+    };
 }
 
 // --- ChatUI: Gerencia o DOM e Interação (View) ---
-class ChatUI {
-    constructor() {
-        this.service = new ChatService(); // Pega o singleton
-        this.myUsername = window.myUsername;
-        this.myUserId = window.myUserId;
+if (typeof window.ChatUI === 'undefined') {
+    window.ChatUI = class ChatUI {
+        constructor() {
+            this.service = new window.ChatService(); // Pega o singleton
+            this.myUsername = window.myUsername;
+            this.myUserId = window.myUserId;
         this.openPrivateChats = new Set();
 
         // Elementos DOM (assumindo que o HTML já foi injetado)
@@ -415,27 +426,28 @@ class ChatUI {
         }
     }
 
-    onUserListUpdate(userListDataString) {
-        try {
-            const users = JSON.parse(userListDataString);
-            this.dom.userList.innerHTML = '';
+        onUserListUpdate(userListDataString) {
+            try {
+                const users = JSON.parse(userListDataString);
+                this.dom.userList.innerHTML = '';
 
-            users.forEach(user => {
-                if (user.username === this.myUsername) return; // Não mostrar a si mesmo
+                users.forEach(user => {
+                    if (user.username === this.myUsername) return; // Não mostrar a si mesmo
 
-                const a = document.createElement('a');
-                a.href = '#';
-                a.className = 'list-group-item list-group-item-action';
-                a.dataset.userId = user.id;
-                a.dataset.userName = user.username;
-                a.textContent = `${user.username} (${user.type})`;
+                    const a = document.createElement('a');
+                    a.href = '#';
+                    a.className = 'list-group-item list-group-item-action';
+                    a.dataset.userId = user.id;
+                    a.dataset.userName = user.username;
+                    a.textContent = `${user.username} (${user.type})`;
 
-                this.dom.userList.appendChild(a);
-            });
-        } catch (e) {
-            console.error("Erro ao processar lista de usuários:", e);
+                    this.dom.userList.appendChild(a);
+                });
+            } catch (e) {
+                console.error("Erro ao processar lista de usuários:", e);
+            }
         }
-    }
+    };
 }
 
 // --- Função Global de Inicialização ---
@@ -444,11 +456,11 @@ class ChatUI {
 
 function initializeChatComponent() {
     // 1. Inicializa o Singleton do Service (se não existir) e conecta
-    const service = new ChatService();
+    const service = new window.ChatService();
     service.connect(window.chatId);
 
     // 2. Inicializa a UI
-    const ui = new ChatUI();
+    const ui = new window.ChatUI();
     ui.init();
 
     // 3. Retorna o objeto UI para controle de lifecycle externo
