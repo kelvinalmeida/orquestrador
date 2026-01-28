@@ -1,20 +1,22 @@
 // --- ChatService: Gerencia a conexão Socket.IO (Singleton) ---
-class ChatService {
-    constructor() {
-        if (ChatService.instance) {
-            return ChatService.instance;
+// Usamos uma verificação global para evitar redeclaração se o script for reinjetado.
+if (typeof window.ChatService === 'undefined') {
+    window.ChatService = class ChatService {
+        constructor() {
+            if (window.ChatService.instance) {
+                return window.ChatService.instance;
+            }
+
+            console.log("[ChatService] Inicializando serviço...");
+            this.socket = null;
+            this.listeners = new Map(); // Map<EventName, Set<Callback>>
+            this.chatId = null;
+            this.isConnected = false;
+
+            window.ChatService.instance = this;
         }
 
-        console.log("[ChatService] Inicializando serviço...");
-        this.socket = null;
-        this.listeners = new Map(); // Map<EventName, Set<Callback>>
-        this.chatId = null;
-        this.isConnected = false;
-
-        ChatService.instance = this;
-    }
-
-    connect(chatId) {
+        connect(chatId) {
         this.chatId = chatId;
 
         // Se já existe socket, verificar estado
@@ -74,14 +76,15 @@ class ChatService {
 
         // Lista de Usuários
         this.socket.on('update_user_list', (data) => this.notify('user_list_update', data));
+        this.socket.on('update_online_users', (data) => this.notify('online_users_update', data));
     }
 
-    joinRoom() {
-        if (!this.socket || !this.chatId) return;
-        console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
-        this.socket.emit('join', { chat_id: this.chatId });
-        this.loadGeneralHistory();
-    }
+        joinRoom() {
+            if (!this.socket || !this.chatId) return;
+            console.log(`[ChatService] Entrando na sala ${this.chatId}...`);
+            this.socket.emit('join', { chat_id: this.chatId });
+            this.loadGeneralHistory();
+        }
 
     loadGeneralHistory() {
         if (this.socket && this.chatId) {
@@ -136,19 +139,21 @@ class ChatService {
         }
     }
 
-    notify(event, data) {
-        if (this.listeners.has(event)) {
-            this.listeners.get(event).forEach(cb => cb(data));
+        notify(event, data) {
+            if (this.listeners.has(event)) {
+                this.listeners.get(event).forEach(cb => cb(data));
+            }
         }
-    }
+    };
 }
 
 // --- ChatUI: Gerencia o DOM e Interação (View) ---
-class ChatUI {
-    constructor() {
-        this.service = new ChatService(); // Pega o singleton
-        this.myUsername = window.myUsername;
-        this.myUserId = window.myUserId;
+if (typeof window.ChatUI === 'undefined') {
+    window.ChatUI = class ChatUI {
+        constructor() {
+            this.service = new window.ChatService(); // Pega o singleton
+            this.myUsername = window.myUsername;
+            this.myUserId = window.myUserId;
         this.openPrivateChats = new Set();
 
         // Elementos DOM (assumindo que o HTML já foi injetado)
@@ -171,6 +176,7 @@ class ChatUI {
         this.onHistoryGeneral = this.onHistoryGeneral.bind(this);
         this.onHistoryPrivate = this.onHistoryPrivate.bind(this);
         this.onUserListUpdate = this.onUserListUpdate.bind(this);
+        this.onOnlineUsersUpdate = this.onOnlineUsersUpdate.bind(this);
     }
 
     init() {
@@ -203,6 +209,9 @@ class ChatUI {
             <div class="tab-pane fade show active" id="tab-pane-geral" role="tabpanel">
                 <ul class="list-unstyled overflow-auto chat-messages" style="height: 60vh;"></ul>
             </div>`;
+
+        // Mostrar Loading no Geral imediatamente
+        this.showLoading('tab-pane-geral');
     }
 
     attachDOMListeners() {
@@ -223,6 +232,7 @@ class ChatUI {
         this.service.subscribe('history_general', this.onHistoryGeneral);
         this.service.subscribe('history_private', this.onHistoryPrivate);
         this.service.subscribe('user_list_update', this.onUserListUpdate);
+        this.service.subscribe('online_users_update', this.onOnlineUsersUpdate);
     }
 
     unsubscribeFromService() {
@@ -231,6 +241,7 @@ class ChatUI {
         this.service.unsubscribe('history_general', this.onHistoryGeneral);
         this.service.unsubscribe('history_private', this.onHistoryPrivate);
         this.service.unsubscribe('user_list_update', this.onUserListUpdate);
+        this.service.unsubscribe('online_users_update', this.onOnlineUsersUpdate);
     }
 
     // --- Lógica de UI ---
@@ -308,6 +319,9 @@ class ChatUI {
         const newTab = new bootstrap.Tab(li.querySelector('button'));
         newTab.show();
 
+        // Mostrar Loading na nova aba privada
+        this.showLoading(`tab-pane-${targetUsername}`);
+
         // Carregar histórico
         this.service.loadPrivateHistory(targetUsername);
     }
@@ -336,6 +350,10 @@ class ChatUI {
 
         const ul = pane.querySelector('.chat-messages');
         if (!ul) return;
+
+        // Se houver indicador de loading ou "sem mensagens", removemos
+        const indicators = ul.querySelectorAll('.loading-indicator, .no-messages-indicator');
+        indicators.forEach(el => el.remove());
 
         const li = document.createElement('li');
         const isMyMessage = message.username === this.myUsername;
@@ -388,9 +406,11 @@ class ChatUI {
         if (pane) {
             const ul = pane.querySelector('.chat-messages');
             if (ul) {
-                ul.innerHTML = ''; // Limpa
-                if (data.messages) {
+                ul.innerHTML = ''; // Limpa loading
+                if (data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => this.addMessageToPane('tab-pane-geral', msg));
+                } else {
+                    this.showNoMessages('tab-pane-geral');
                 }
             }
         }
@@ -399,43 +419,112 @@ class ChatUI {
     onHistoryPrivate(data) {
         // data = { target_username, with_user_id, messages: [] }
         const partner = data.target_username; // Quem eu estou conversando
-        // Verifica se é o histórico correto para a aba aberta?
-        // O backend envia 'target_username' no payload para ajudar
 
         const paneId = `tab-pane-${partner}`;
         const pane = document.getElementById(paneId);
         if (pane) {
             const ul = pane.querySelector('.chat-messages');
             if (ul) {
-                ul.innerHTML = '';
-                if (data.messages) {
+                ul.innerHTML = ''; // Limpa loading
+                if (data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => this.addMessageToPane(paneId, msg));
+                } else {
+                    this.showNoMessages(paneId);
                 }
             }
         }
     }
 
-    onUserListUpdate(userListDataString) {
-        try {
-            const users = JSON.parse(userListDataString);
-            this.dom.userList.innerHTML = '';
+    showLoading(paneId) {
+        const pane = document.getElementById(paneId);
+        if (!pane) return;
+        const ul = pane.querySelector('.chat-messages');
+        if (!ul) return;
 
-            users.forEach(user => {
-                if (user.username === this.myUsername) return; // Não mostrar a si mesmo
-
-                const a = document.createElement('a');
-                a.href = '#';
-                a.className = 'list-group-item list-group-item-action';
-                a.dataset.userId = user.id;
-                a.dataset.userName = user.username;
-                a.textContent = `${user.username} (${user.type})`;
-
-                this.dom.userList.appendChild(a);
-            });
-        } catch (e) {
-            console.error("Erro ao processar lista de usuários:", e);
-        }
+        ul.innerHTML = `
+            <li class="text-center my-5 loading-indicator">
+                <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+                <p class="mt-2 text-muted animate-pulse">Carregando mensagens...</p>
+            </li>
+        `;
     }
+
+    showNoMessages(paneId) {
+        const pane = document.getElementById(paneId);
+        if (!pane) return;
+        const ul = pane.querySelector('.chat-messages');
+        if (!ul) return;
+
+        ul.innerHTML = `
+            <li class="text-center my-5 no-messages-indicator">
+                <i class="bi bi-chat-square-dots display-1 text-muted opacity-25"></i>
+                <p class="mt-3 text-muted">Sem mensagens.</p>
+            </li>
+        `;
+    }
+
+        onUserListUpdate(userListDataString) {
+            try {
+                const users = JSON.parse(userListDataString);
+                this.dom.userList.innerHTML = '';
+
+                users.forEach(user => {
+                    if (user.username === this.myUsername) return; // Não mostrar a si mesmo
+
+                    const a = document.createElement('a');
+                    a.href = '#';
+                    a.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                    a.dataset.userId = user.id;
+                    a.dataset.userName = user.username;
+
+                    // Indicador de Status (padrão vermelho/offline)
+                    // Usaremos um span com classe para manipular a cor
+                    a.innerHTML = `
+                        <span>${user.username} <small class="text-muted">(${user.type})</small></span>
+                        <span class="status-indicator rounded-circle bg-danger border border-light"
+                              style="width: 12px; height: 12px; display: inline-block; box-shadow: 0 0 2px #000;"
+                              title="Offline">
+                        </span>
+                    `;
+
+                    this.dom.userList.appendChild(a);
+                });
+            } catch (e) {
+                console.error("Erro ao processar lista de usuários:", e);
+            }
+        }
+
+        onOnlineUsersUpdate(onlineUserIds) {
+            // onlineUserIds é uma lista de IDs [1, 4, 10, ...]
+            if (!this.dom.userList) return;
+
+            // Converter para Set para busca rápida (IDs podem vir como strings ou numbers do JSON)
+            const onlineSet = new Set(onlineUserIds.map(id => String(id)));
+
+            // Iterar sobre a lista DOM
+            const userItems = this.dom.userList.querySelectorAll('[data-user-id]');
+            userItems.forEach(item => {
+                const userId = item.dataset.userId;
+                const indicator = item.querySelector('.status-indicator');
+
+                if (indicator) {
+                    if (onlineSet.has(String(userId))) {
+                        // Online: Verde Brilhante
+                        indicator.className = 'status-indicator rounded-circle bg-success border border-light';
+                        indicator.style.boxShadow = '0 0 8px #0f0'; // Brilho verde
+                        indicator.title = "Online";
+                    } else {
+                        // Offline: Vermelho
+                        indicator.className = 'status-indicator rounded-circle bg-danger border border-light';
+                        indicator.style.boxShadow = 'none';
+                        indicator.title = "Offline";
+                    }
+                }
+            });
+        }
+    };
 }
 
 // --- Função Global de Inicialização ---
@@ -444,11 +533,11 @@ class ChatUI {
 
 function initializeChatComponent() {
     // 1. Inicializa o Singleton do Service (se não existir) e conecta
-    const service = new ChatService();
+    const service = new window.ChatService();
     service.connect(window.chatId);
 
     // 2. Inicializa a UI
-    const ui = new ChatUI();
+    const ui = new window.ChatUI();
     ui.init();
 
     // 3. Retorna o objeto UI para controle de lifecycle externo

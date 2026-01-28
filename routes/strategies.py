@@ -10,6 +10,10 @@ import json
 
 strategy_bp = Blueprint("strategy", __name__)
 
+# Global in-memory storage for online users (Chat ID -> Set of User IDs)
+# Note: In a multi-worker production environment, use Redis instead.
+connected_users = {}
+
 @strategy_bp.route('/strategies/create', methods=['POST', 'GET'])
 def create_strategy():
     if request.method == 'POST':
@@ -165,21 +169,38 @@ def handle_connect():
 def on_join(data):
     """Cliente entra em uma sala específica para este chat."""
     username = session.get('username')
+    user_id = session.get('user_id')
     chat_id = data['chat_id']
     
     # Adiciona o cliente à sala do chat
     join_room(chat_id)
 
+    # Add user to connected list
+    if chat_id not in connected_users:
+        connected_users[chat_id] = set()
+    connected_users[chat_id].add(user_id)
+    
+    # Store chat_id in session for disconnect handler
+    session['current_chat_id'] = chat_id
+
+    # Broadcast static list AND online status
     emit('update_user_list', session['all_users'])
-    
-    
+    emit('update_online_users', list(connected_users[chat_id]), to=chat_id)
     
 @socketio.on('disconnect')
 def on_disconnect():
     """Cliente se desconecta e sai da sala."""
     username = session.get('username')
-    # O Flask-SocketIO remove o cliente das salas automaticamente,
-    # mas podemos notificar os outros se tivermos o chat_id.
+    user_id = session.get('user_id')
+    chat_id = session.get('current_chat_id')
+
+    if chat_id and chat_id in connected_users:
+        if user_id in connected_users[chat_id]:
+            connected_users[chat_id].remove(user_id)
+            # Broadcast updated online list
+            emit('update_online_users', list(connected_users[chat_id]), to=chat_id)
+
+    # O Flask-SocketIO remove o cliente das salas automaticamente
     print(f'Usuário {username} desconectou.')
 
 @socketio.on('load_general_messages')
